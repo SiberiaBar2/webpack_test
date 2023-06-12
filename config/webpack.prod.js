@@ -1,8 +1,13 @@
+const os = require("os");
 const path = require("path");
 const ESLintPlugin = require("eslint-webpack-plugin");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const CssMinimizerPlugin = require("css-minimizer-webpack-plugin");
+const Terser = require("terser-webpack-plugin"); // 代码压缩
+const threads = os.cpus().length; // cpu的核数
+// 注意：图片压缩是对本地图片的压缩，不适用于线上图片
+const ImageMinimizerPlugin = require("image-minimizer-webpack-plugin");
 
 function getStrleloader(pre) {
   return [
@@ -79,14 +84,26 @@ module.exports = {
       },
       {
         test: /\.js$/,
-        exclude: /(node_modules)/, // 排除的文件
-        use: {
-          loader: "babel-loader",
-          // 智能预设可以在这些 也可以在外面 babel.config.js 写
-          // options: {
-          //   presets: ["@babel/preset-env"],
-          // },
-        },
+        // exclude: /(node_modules)/, // 排除的文件
+        include: path.resolve(__dirname, "../src"), // 只处理src下的文件
+        use: [
+          {
+            loader: "thread-loader", // 开启多进程
+            // 智能预设可以在这些 也可以在外面 babel.config.js 写
+            options: {
+              works: threads, // 进程数量
+            },
+          },
+          {
+            loader: "babel-loader",
+            // 智能预设可以在这些 也可以在外面 babel.config.js 写
+            options: {
+              cacheDirectory: true, // 开启babel缓存
+              cacheCompression: false, // 关闭缓存压缩
+              plugins: ["@babel/plugin-transform-runtime"],
+            }, 
+          },
+        ],
       },
     ],
   },
@@ -95,6 +112,13 @@ module.exports = {
     new ESLintPlugin({
       // 检查哪些文件
       context: path.resolve(__dirname, "../src"),
+      exclude: "node_modules",
+      threads, // 开启多进 程
+      cache: true,
+      cacheLocation: path.resolve(
+        __dirname,
+        "../node_modules/.cache/eslintcache"
+      ),
     }),
     new HtmlWebpackPlugin({
       // 模版 以 public/index.html为模版创建新资源
@@ -104,8 +128,49 @@ module.exports = {
     new MiniCssExtractPlugin({
       filename: "static/css/main.css",
     }),
-    new CssMinimizerPlugin()
+    // new CssMinimizerPlugin(),
+    // new Terser({
+    //   parallel: threads,
+    // }),
   ],
+  // 压缩的配置这里也是可以的 推荐放这
+  optimization: {
+    minimizer: [
+      // 压缩css
+      new CssMinimizerPlugin(),
+      // 压缩js
+      new Terser({
+        parallel: threads,
+      }),
+      new ImageMinimizerPlugin({
+        minimizer: {
+          implementation: ImageMinimizerPlugin.imageminGenerate,
+          options: {
+            plugins: [
+              ["gifsicle", { interlaced: true }],
+              ["jpegtran", { progressive: true }],
+              ["optipng", { optimizationLevel: 5 }],
+              [
+                "svgo",
+                {
+                  plugins: [
+                    "preset-default",
+                    "prefixIds",
+                    {
+                      name: "sortAttrs",
+                      params: {
+                        xmlnsOrder: "alphabetical",
+                      },
+                    },
+                  ],
+                },
+              ],
+            ],
+          },
+        },
+      }),
+    ],
+  },
   // 模式
   mode: "production",
 };
